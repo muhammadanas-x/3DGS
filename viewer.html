@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Gaussian Splatting Live Training</title>
+
+<style>
+    * { box-sizing: border-box; }
+
+    body {
+        margin: 0;
+        background: #0c0c0c;
+        color: #eee;
+        font-family: Inter, Arial, sans-serif;
+    }
+
+    header {
+        padding: 24px 32px;
+        border-bottom: 1px solid #252525;
+    }
+
+    h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 500;
+    }
+
+    #stats {
+        margin-top: 8px;
+        color: #999;
+        font-size: 14px;
+    }
+
+    main {
+        display: flex;
+        gap: 24px;
+        padding: 32px;
+        flex-wrap: wrap;
+    }
+
+    .panel {
+        background: #151515;
+        border: 1px solid #292929;
+        border-radius: 10px;
+        padding: 14px;
+    }
+
+    .panel h2 {
+        font-size: 14px;
+        font-weight: 500;
+        margin: 0 0 12px 0;
+        color: #aaa;
+    }
+
+    img, canvas {
+        width: 400px;
+        height: 400px;
+        display: block;
+    }
+
+    #renderContainer {
+        position: relative;
+        width: 400px;
+        height: 400px;
+    }
+
+    #renderImage {
+        position: absolute;
+        left: 0;
+        top: 0;
+    }
+
+    #overlay {
+        position: absolute;
+        left: 0;
+        top: 0;
+        pointer-events: none;
+    }
+
+    button {
+        margin-left: 16px;
+        padding: 7px 12px;
+        background: #222;
+        border: 1px solid #444;
+        border-radius: 6px;
+        color: white;
+        cursor: pointer;
+    }
+</style>
+</head>
+
+<body>
+
+<header>
+    <h1>Live Gaussian Splatting Training</h1>
+
+    <div id="stats">
+        Connecting...
+    </div>
+</header>
+
+<main>
+
+    <div class="panel">
+        <h2>Target Image</h2>
+        <img id="targetImage">
+    </div>
+
+    <div class="panel">
+        <h2>
+            Training Render
+            <button id="toggle">Toggle Gaussians</button>
+        </h2>
+
+        <div id="renderContainer">
+            <img id="renderImage">
+            <canvas id="overlay" width="400" height="400"></canvas>
+        </div>
+    </div>
+
+</main>
+
+
+<script>
+const targetImage = document.getElementById("targetImage");
+const renderImage = document.getElementById("renderImage");
+const stats = document.getElementById("stats");
+
+const canvas = document.getElementById("overlay");
+const ctx = canvas.getContext("2d");
+
+let showGaussians = true;
+
+
+document.getElementById("toggle").onclick = () => {
+    showGaussians = !showGaussians;
+    canvas.style.display = showGaussians ? "block" : "none";
+};
+
+
+function drawGaussians(gaussians) {
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for (let i = gaussians.length - 1; i >= 0; --i) {
+
+        const g = gaussians[i];
+
+        const a = g.cov[0];
+        const b = g.cov[1];
+        const c = g.cov[2];
+
+        const trace = a + c;
+        const discriminant = Math.sqrt(Math.max(0, (a - c) * (a - c) + 4 * b * b));
+
+        const lambda1 = Math.max(0, 0.5 * (trace + discriminant));
+        const lambda2 = Math.max(0, 0.5 * (trace - discriminant));
+
+        const angle = 0.5 * Math.atan2(2 * b, a - c);
+
+        const radius1 = Math.min(200, 3 * Math.sqrt(lambda1));
+        const radius2 = Math.min(200, 3 * Math.sqrt(lambda2));
+
+        const r = Math.floor(g.color[0] * 255);
+        const green = Math.floor(g.color[1] * 255);
+        const blue = Math.floor(g.color[2] * 255);
+
+        ctx.save();
+
+        ctx.translate(g.u, g.v);
+        ctx.rotate(angle);
+
+        ctx.beginPath();
+        ctx.ellipse(0, 0, radius1, radius2, 0, 0, Math.PI * 2);
+
+        ctx.strokeStyle = `rgba(${r}, ${green}, ${blue}, 0.75)`;
+        ctx.lineWidth = 1.2;
+
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(0, 0, 2, 0, Math.PI * 2);
+
+        ctx.fillStyle = `rgb(${r}, ${green}, ${blue})`;
+        ctx.fill();
+
+        ctx.restore();
+    }
+}
+
+
+const protocol = location.protocol === "https:" ? "wss" : "ws";
+const socket = new WebSocket(`${protocol}://${location.host}/ws`);
+
+
+socket.onmessage = event => {
+
+    const data = JSON.parse(event.data);
+
+    if (data.done) {
+        stats.textContent += " — training complete";
+        return;
+    }
+
+    if (data.target)
+        targetImage.src = data.target;
+
+    renderImage.src = data.render;
+
+    stats.textContent =
+        `iteration ${data.iteration} | ` +
+        `loss ${data.loss.toFixed(6)} | ` +
+        `gaussians ${data.visible}/${data.total}`;
+
+    if (showGaussians)
+        drawGaussians(data.gaussians);
+};
+
+
+socket.onclose = () => {
+    stats.textContent += " — disconnected";
+};
+</script>
+
+</body>
+</html>
